@@ -103,7 +103,7 @@ int dmp_diff_from_strs(
 		text2 = "";
 
 	return dmp_diff_new(
-		diff, options, text1, strlen(text1), text2, strlen(text2));
+		diff, options, text1, (uint32_t)strlen(text1), text2, (uint32_t)strlen(text2));
 }
 
 static int diff_main(
@@ -191,7 +191,7 @@ static int diff_main(
 
 	if ((found = dmp_strstr(t_long, l_long, t_short, l_short)) != NULL) {
 		int op = (t_short == text1) ? DMP_DIFF_INSERT : DMP_DIFF_DELETE;
-		uint32_t found_at = (found - t_long);
+		uint32_t found_at = (uint32_t)(found - t_long);
 
 		dmp_range_insert(
 			pool, out, -1, op, t_long, 0, found_at);
