@@ -54,11 +54,36 @@ int get_file_size(diff_file *df, char *name)
   return 0;
 }
 
+static int cb(void *cb_ref, dmp_operation_t op, const void *data, uint32_t len)
+{
+  int i;
+  //printf ("cb\n");
+
+  switch(op) {
+    case 0:
+      break;
+
+    case 1:
+      //fwrite("\e[1m", 4, 1, stdout);
+      fwrite("\e[32m", 5, 1, stdout);
+      break;
+
+    case -1:
+      fwrite("\e[9;31m", 7, 1, stdout);
+      break;
+  }
+  fwrite(data, len, 1, stdout);
+  if (op)
+      fwrite("\e[0m", 4, 1, stdout);
+  return 0;
+}
+
 int main(int argc, char *argv[])
 {
   diff_file f1, f2;
   int r1, r2;
   dmp_diff *diff;
+  dmp_options opts;
   /*
    * Sanity checking
    */
@@ -70,8 +95,11 @@ int main(int argc, char *argv[])
     printf("r1=%d r2=%d!\n", r1, r2);
     exit(66);
   }
-  dmp_diff_new(&diff, 0, f1.m, f1.len, f2.m, f2.len);
-  dmp_diff_print_raw(stdout, diff);
+  dmp_options_init(&opts);
+  opts.timeout = 5.0F;
+  dmp_diff_new(&diff, &opts, f1.m, f1.len, f2.m, f2.len);
+  //dmp_diff_print_raw(stdout, diff);
+  dmp_diff_foreach(diff, cb, 0);
   dmp_diff_free(diff);
   cleanup(&f1);
   cleanup(&f2);
