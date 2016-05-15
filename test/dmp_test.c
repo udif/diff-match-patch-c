@@ -77,6 +77,7 @@ static void expect_diff_stat(
 
 	assert(dmp_diff_foreach(diff, diff_stats, &d) == 0);
 
+    //printf("d=%d e=%d i=%d\n", d.deletes, d.equals, d.inserts);
 	assert(d.deletes == dels);
 	assert(d.equals == eqs);
 	assert(d.inserts == ins);
@@ -210,10 +211,7 @@ void test_diff_0(void)
 	expect_diff_stat(diff, 1, 1, 1, 0x5); /* 0101 */
 	dmp_diff_free(diff);
 
-    dmp_diff_from_strs(&diff, NULL, "a\nbcde\n\n", "A\nbcdefghijklmnopqrs\n\n");
-    // The line below locks up the test inside diff_cleanup_merge()
-    //dmp_diff_from_strs(&diff, NULL, "a\nbcde\n\n", "A\nbcdefghijklmnopqrst\n\n");
-    /* expect: ins='xaxcx' eq='abc' del='y' */
+    dmp_diff_from_strs(&diff, NULL, "a\nbcde\n\n", "A\nbcdefghijklmnopqrst\n\n");
     assert(diff != NULL);
     dmp_diff_print_raw(stderr, diff);
     expect_diff_stat(diff, 1, 2, 2, 0x1a); /* 11010 */
