@@ -1,6 +1,7 @@
 #include <stdio.h>
 #ifdef WIN32
-#include <windows-mmap.h>
+#include <mman.h>
+#include <io.h>
 #define  open  _open
 #define  close _close
 #else
