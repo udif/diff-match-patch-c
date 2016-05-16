@@ -15,20 +15,15 @@
 * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
-#include <config.h>
-
 #ifndef HAVE_MEMRCHR
 
-#include <sys/types.h>
-
-#include "sudo_compat.h"
+#include <stddef.h>
 
 /*
 * Reverse memchr()
 * Find the last occurrence of 'c' in the buffer 's' of size 'n'.
 */
-void *
-sudo_memrchr(const void *s, int c, size_t n)
+void *memrchr(const void *s, int c, size_t n)
 {
 	const unsigned char *cp;
 
