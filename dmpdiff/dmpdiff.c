@@ -1,9 +1,15 @@
 #include <stdio.h>
+#ifdef WIN32
+#include <windows-mmap.h>
+#define  open  _open
+#define  close _close
+#else
 #include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <stdlib.h>
 #include <dmp.h>
 
@@ -23,9 +29,14 @@ typedef struct {
 
 void cleanup (diff_file *df)
 {
+  if (df->m) {
+	  munmap(df->m, df->len);
+	  df->m = 0;
+	  df->len = 0;
+  }
   if (df->fd > 0) {
-    df->fd = 0;
-    close(df->fd);
+	  close(df->fd);
+	  df->fd = 0;
   }
 }
 
@@ -64,16 +75,16 @@ static int cb(void *cb_ref, dmp_operation_t op, const void *data, uint32_t len)
 
     case 1:
       //fwrite("\e[1m", 4, 1, stdout);
-      fwrite("\e[32m", 5, 1, stdout);
+      fwrite("\033[32m", 5, 1, stdout);
       break;
 
     case -1:
-      fwrite("\e[9;31m", 7, 1, stdout);
+      fwrite("\033[9;31m", 7, 1, stdout);
       break;
   }
   fwrite(data, len, 1, stdout);
   if (op)
-      fwrite("\e[0m", 4, 1, stdout);
+      fwrite("\033[0m", 4, 1, stdout);
   return 0;
 }
 
