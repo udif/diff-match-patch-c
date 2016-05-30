@@ -54,5 +54,10 @@ test: dmp_test
 dmp_test: $(LIBNAME) include/dmp.h $(TESTSRCS)
 	$(CC) -o dmp_test $(CFLAGS) $(TESTSRCS) -L. -ldmp
 
+dmpdiff: bin/dmpdiff
+
+bin/dmpdiff: $(LIBNAME) include/dmp.h dmpdiff/dmpdiff.c
+	$(CC) -o bin/dmpdiff $(CFLAGS) dmpdiff/dmpdiff.c -L. -ldmp
+
 clean:
 	$(rm) -rf $(OBJS) $(LIBNAME) dmp_test *.dSYM
