@@ -47,6 +47,7 @@ static int diff_bisect(
 	const char *, uint32_t, const char *, uint32_t);
 
 static int diff_cleanup_merge(dmp_diff *diff, dmp_range *list);
+static void diff_prettify(dmp_diff *diff, dmp_range *list);
 
 static dmp_diff *alloc_diff(const dmp_options *opts)
 {
@@ -223,7 +224,9 @@ static int diff_main(
 	if (!pool->error)
 		diff_cleanup_merge(diff, out);
 
+
 finish:
+	diff_prettify(diff, out);
 	dmp_range_normalize(pool, out);
 
 	return pool->error;
@@ -521,6 +524,38 @@ static int diff_cleanup_merge(dmp_diff *diff, dmp_range *list)
 		return diff_cleanup_merge(diff, list);
 
 	return pool->error;
+}
+
+//
+// Try to make addition/deletion of whole lines start at real line begin/ends 
+//
+static void diff_prettify(dmp_diff *diff, dmp_range *list)
+{
+	dmp_pool *pool = &diff->pool;
+	dmp_node *last = NULL, *node, *next;
+	int i;
+
+	last = dmp_node_at(pool, list->start);
+	next = (last->next < 0) ? NULL : dmp_node_at(pool, last->next);
+
+	for (i = last->next; next != NULL && i != -1; i = node->next) {
+		node = next;
+		if (node->next < 0)
+			break;
+		next = dmp_node_at(pool, node->next);
+
+		if (last->op == DMP_DIFF_EQUAL && next->op == DMP_DIFF_EQUAL) {
+			while (last->len > 0 && node->text[-1] != '\n') {
+				if (node->text[-1] == next->text[-1]) {
+					node->text--;
+					next->text--;
+					last->len--;
+					next->len++;
+				}
+			}
+		}
+		last = node;
+	}
 }
 
 void dmp_diff_free(dmp_diff *diff)
