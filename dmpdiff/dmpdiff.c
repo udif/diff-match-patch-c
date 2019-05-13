@@ -180,9 +180,11 @@ static void check_buf(void)
 static int cb(void *cb_ref, dmp_operation_t op, const void *data, uint32_t len)
 {
   const char *l = data;
+  const void *last_data = data+len;
   cb_state *cb_s = cb_ref;
   diff_st st;
   diff_st *last_st = &cb_s->last_st;
+  int len2;
 
   if (debug) p += sprintf(p, "%c:%d\n", "DEI"[op-DMP_DIFF_DELETE] , len);
   switch(op) {
@@ -193,6 +195,13 @@ static int cb(void *cb_ref, dmp_operation_t op, const void *data, uint32_t len)
         // if already at beginning of line and either we display something anyhow, or we don't skip equal lines
         if (cb_s->nl) {
           cb_s->line++;
+          for (len2 = 0; l[len2] != '\n' && (l+len2 != last_data); len2++);
+          if (cb_s->opts->skip_equal_lines && l[len2] == '\n') {
+            if (l+len2 == last_data)
+              break;
+            l += len2 + 1;
+            cb_s->line++;
+          }
           if (cb_s->opts->show_line_numbers)
             p += sprintf(p, "%d: ", cb_s->line);
           cb_s->nl = false;
@@ -201,7 +210,7 @@ static int cb(void *cb_ref, dmp_operation_t op, const void *data, uint32_t len)
           cb_s->nl = true;
         *p++ = *l++;
         check_buf();
-      } while (l != data + len);
+      } while (l !=last_data);
       return 0;
 
     case DMP_DIFF_DELETE:
