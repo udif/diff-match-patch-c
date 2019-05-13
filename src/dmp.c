@@ -47,7 +47,7 @@ static int diff_bisect(
 	const char *, uint32_t, const char *, uint32_t);
 
 static int diff_cleanup_merge(dmp_diff *diff, dmp_range *list);
-static void diff_prettify(dmp_diff *diff, dmp_range *list);
+static void diff_prettify(dmp_diff *diff, const dmp_options *opts, dmp_range *list);
 
 static dmp_diff *alloc_diff(const dmp_options *opts)
 {
@@ -68,6 +68,8 @@ static dmp_diff *alloc_diff(const dmp_options *opts)
 	return diff;
 }
 
+// *diff_ptr may be NULL, but if it is not NULL, it is assumed to point to an instance of dmp_diff
+// containing initial value of flags
 int dmp_diff_new(
 	dmp_diff **diff_ptr,
 	const dmp_options *options,
@@ -226,7 +228,7 @@ static int diff_main(
 
 
 finish:
-	diff_prettify(diff, out);
+	diff_prettify(diff, opts, out);
 	dmp_range_normalize(pool, out);
 
 	return pool->error;
@@ -527,9 +529,18 @@ static int diff_cleanup_merge(dmp_diff *diff, dmp_range *list)
 }
 
 //
-// Try to make addition/deletion of whole lines start at real line begin/ends 
+// Try to make addition/deletion of whole lines start at real line begin/ends
+// If merge window > 0, the collapse any equal section smaller or equal than merge_window into the neighbouring sections
+// e.g
+// <DMP_DIFF_INSERT1> <DMP_DIFF_EQUAL2> <DMP_DIFF_INSERT3> -> <DMP_DIFF_DELETE2>   <DMP_DIFF_INSERT123>
+// <DMP_DIFF_DELETE1> <DMP_DIFF_EQUAL2> <DMP_DIFF_DELETE3> -> <DMP_DIFF_DELETE123> <DMP_DIFF_INSERT2>
+// <DMP_DIFF_DELETE1> <DMP_DIFF_EQUAL2> <DMP_DIFF_INSERT3> -> <DMP_DIFF_DELETE12>  <DMP_DIFF_INSERT23>
+// <DMP_DIFF_INSERT1> <DMP_DIFF_EQUAL2> <DMP_DIFF_DELETE3> -> <DMP_DIFF_INSERT12>  <DMP_DIFF_DELETE23>
 //
-static void diff_prettify(dmp_diff *diff, dmp_range *list)
+// This function relies heavily on the fact that all node->text pointers points to a window within two fixed memory windows
+// containing the entire files being compared, therefore, stepping backwards the text pointer will always point to valid memory
+//
+static void diff_prettify(dmp_diff *diff, const dmp_options *opts, dmp_range *list)
 {
 	dmp_pool *pool = &diff->pool;
 	dmp_node *last = NULL, *node, *next;
@@ -544,14 +555,45 @@ static void diff_prettify(dmp_diff *diff, dmp_range *list)
 			break;
 		next = dmp_node_at(pool, node->next);
 
-		if (last->op == DMP_DIFF_EQUAL && next->op == DMP_DIFF_EQUAL) {
-			while (last->len > 0 && node->text[-1] != '\n') {
-				if (node->text[-1] == next->text[-1]) {
-					node->text--;
-					next->text--;
-					last->len--;
-					next->len++;
-				}
+		if (last->op == DMP_DIFF_EQUAL && next->op == DMP_DIFF_EQUAL
+			//&& (&(last->text[last->len]) == node->text)
+			//&& &(node->text[node->len]) == next->text
+			&& memchr(node->text, '\n', node->len) != NULL
+			) {
+			while (last->len > 0 && node->text[-1] != '\n' && node->text[-1] == next->text[-1]) {
+				node->text--;
+				next->text--;
+				last->len--;
+				next->len++;
+			}
+		} else if (opts->merge_window > 0 && node->op == DMP_DIFF_EQUAL && node->len <= opts->merge_window) {
+			switch (last->op) {
+				 case DMP_DIFF_DELETE:
+					switch (next->op) {
+						case DMP_DIFF_DELETE:
+							last->len += node->len + next->len; // DELETE123
+							node->op = DMP_DIFF_INSERT; // INSERT2
+							next->len = 0; // kill node
+							break;
+						case DMP_DIFF_INSERT:
+							break;
+						default:
+							break;
+					}
+				 case DMP_DIFF_INSERT:
+					switch (next->op) {
+						case DMP_DIFF_DELETE:
+							break;
+						case DMP_DIFF_INSERT:
+							last->len += node->len + next->len; // DELETE123
+							node->op = DMP_DIFF_DELETE; // INSERT2
+							next->len = 0; // kill node
+							break;
+						default:
+							break;
+					}
+				 default:
+					break;
 			}
 		}
 		last = node;

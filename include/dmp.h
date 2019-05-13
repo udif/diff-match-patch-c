@@ -35,6 +35,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 /**
  * Public: Each hunk of diff describes one of these operations.
@@ -94,6 +95,12 @@ typedef struct {
 
 	/* Should the diff trim the common suffix? */
 	int trim_common_suffix; /* = 1 */
+
+	/* any equal section this size or smaller may get merged into other sections */
+	unsigned int merge_window;
+	bool skip_equal_lines;
+	bool ignore_whitespace;
+	bool show_line_numbers;
 } dmp_options;
 
 /**

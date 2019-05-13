@@ -15,7 +15,9 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include <dmp.h>
-
+#define OPTPARSE_IMPLEMENTATION
+#define OPTPARSE_API static
+#include "optparse.h"
 #define DMP_MAX_FILE_SIZE 100000000
 
 #define DMP_GFS_NO_FILE 1
@@ -24,8 +26,7 @@
 #define DMP_GFS_MMAP_FAILED 4
 #define DMP_GFS_STAT_FAILED 5
 
-//static const bool debug = true;
-static const bool debug = false;
+static bool debug = false;
 
 typedef enum {
   DMPDIFF_NON_WS = 0,
@@ -33,11 +34,44 @@ typedef enum {
   DMPDIFF_NL = 2
 } dmpdiff_ctype_t;
 
+typedef enum {
+  DFS_EQ,
+  DFS_DEL_WS,
+  DFS_DEL_NON_WS,
+  DFS_DEL_NL,
+  DFS_INS_WS,
+  DFS_INS_NON_WS,
+  DFS_INS_NL
+} diff_st;
+
 typedef struct {
   off_t len;
   int fd;
   char *m;
 } diff_file;
+
+typedef struct {
+  int line; // line number
+  dmp_options *opts;
+  dmp_operation_t last_op;
+  bool first; // true on 1st call
+  bool nl; // true when last call ended on a newline
+  diff_st st, last_st;
+} cb_state;
+static cb_state cb_s;
+
+char *strnchr(const char *p, char c, size_t n)
+{
+	if (!p)
+		return (0);
+
+	while (n-- > 0) {
+		if (*p == c)
+			return ((char *)p);
+		p++;
+	}
+	return (0);
+}
 
 void cleanup (diff_file *df)
 {
@@ -86,108 +120,154 @@ int get_file_size(diff_file *df, const char *name)
   return 0;
 }
 
-static void mark(dmp_operation_t op, dmpdiff_ctype_t ctype)
+static int mark(char *p, diff_st *st, diff_st *last_st)
 {
-  if (debug) printf("op:%d ctype:%d\n", op, ctype);
-  switch (ctype) {
-    case DMPDIFF_NON_WS :
-      switch(op) {
-        case DMP_DIFF_INSERT:
-          fwrite("\033[32m", 5, 1, stdout);
-          break;
-      
-        case DMP_DIFF_DELETE:
-          fwrite("\033[9;31m", 7, 1, stdout);
-          break;
-    
-        default:
-          break;
-      }
-      break;
+  int l = 0;
+  if (*st == *last_st)
+    return 0;
+  //if (debug) l = sprintf(p, "<%c>", "ED-NIin"[*st-DFS_EQ]);
+  *last_st = *st;
+  p += l;
+  switch (*st) {
+    case DFS_EQ :
+      strcpy(p, "\033[0m");
+      return l + 4;
 
-    case DMPDIFF_WS :
-      switch(op) {
-        case DMP_DIFF_INSERT:
-          fwrite("\033[42m", 5, 1, stdout);
-          break;
-      
-        case DMP_DIFF_DELETE:
-          fwrite("\033[9;41m", 8, 1, stdout);
-          break;
-    
-        default:
-          break;
-      }
-      break;
+    case DFS_DEL_WS:
+      strcpy(p, "\033[9;41m");
+      return l + 8;
 
-    case DMPDIFF_NL :
-      switch(op) {
-        case DMP_DIFF_INSERT:
-          fwrite("\033[42m\\n\033[0m\n", 12, 1, stdout);
-          break;
-    
-        case DMP_DIFF_DELETE:
-          fwrite("\033[41m\\n\033[0m\n", 12, 1, stdout);
-          break;
-      
-        default:
-          break;
-      }
-      break;
+    case DFS_DEL_NON_WS:
+      strcpy(p, "\033[9;49;31m");
+      return l + 10;
+
+    case DFS_DEL_NL:
+      strcpy(p, "\033[9;41;39m\\n\033[0m\n");
+      return l + 17;
+
+    case DFS_INS_WS:
+      strcpy(p, "\033[0;42m");
+      return l + 7;
+
+    case DFS_INS_NON_WS:
+      strcpy(p, "\033[0;49;32m");
+      return l + 10;
+
+    case DFS_INS_NL:
+      strcpy(p, "\033[42m\\n\033[0m\n");
+      return l + 12;
+
+    default:
+      return l;
   }
 }
 
-static void unmark(void)
+static char buf[4096];
+static char *p = &buf[0];
+
+static void flush_buf(void)
 {
-  if (debug) printf("-");
-  fwrite("\033[0m", 4, 1, stdout);
+  fwrite(buf, p - &buf[0], 1, stdout);
+  p = &buf[0];
+}
+
+static void check_buf(void)
+{
+  if (p - &buf[0] > (uint32_t)(sizeof(buf)-100u))
+    flush_buf();
 }
 
 static int cb(void *cb_ref, dmp_operation_t op, const void *data, uint32_t len)
 {
-  uint32_t i, j;
-  uint32_t last_i;
-  dmpdiff_ctype_t last_ct, ct;
+  const char *l = data;
+  cb_state *cb_s = cb_ref;
+  diff_st st;
+  diff_st *last_st = &cb_s->last_st;
 
-  if (debug) printf("CB:%c %d\n", 'b' + op, len);
-  if (op) {
-    // first character MUST have a mark
-    last_ct = my_ctype(((char *)data)[0]);
-    if (debug) fwrite("!", 1, 1, stdout);
-    for (last_i = 0, i = 1; i <= len; i++) {
-      ct = my_ctype(((char *)data)[i]);
-      if (debug) fwrite("+", 1, 1, stdout);
-      // if we just completed this insert/delete segment
-      // or we just changed mode from white-space to non-white-space
-      // and vice versa
-      if ((i == len) || (last_ct != ct)) {
-        if (debug) printf("*");
-        if (last_ct == DMPDIFF_NL) {
-          for (j = last_i; j < i; j++) {
-            mark(op, last_ct);
-          }
-        } else {
-          mark(op, last_ct);
-          fwrite((char *)data + last_i, i - last_i, 1, stdout);
-          unmark();
+  if (debug) p += sprintf(p, "%c:%d\n", "DEI"[op-DMP_DIFF_DELETE] , len);
+  switch(op) {
+    case DMP_DIFF_EQUAL:
+      st = DFS_EQ;
+      p += mark(p, &st, last_st);
+      do {
+        // if already at beginning of line and either we display something anyhow, or we don't skip equal lines
+        if (cb_s->nl) {
+          cb_s->line++;
+          if (cb_s->opts->show_line_numbers)
+            p += sprintf(p, "%d: ", cb_s->line);
+          cb_s->nl = false;
         }
-        last_i = i;
-        last_ct = ct;
-//      } else if (((i == len) || (ct == '\n')) && (last_ct == '\n')) {
-//        if (debug) printf("?");
-//        mark(op, ct);
-//        fwrite((char *)data + last_i, i - last_i - 1, 1, stdout);
-//        unmark();
-//        mark_cr(op);
-//        last_i = i;
-      }
-    }
-    // do also last fragment
-//    mark(op, ws);
-//    fwrite((char *)data + last_i, i - last_i, 1, stdout);
-//    unmark();
-  } else {
-    fwrite(data, len, 1, stdout);
+        if (*l == '\n')
+          cb_s->nl = true;
+        *p++ = *l++;
+        check_buf();
+      } while (l != data + len);
+      return 0;
+
+    case DMP_DIFF_DELETE:
+      do {
+        // if already at beginning of line and either we display something anyhow, or we don't skip equal lines
+        if (cb_s->nl) {
+          st = DFS_EQ;
+          cb_s->line++;
+          p += mark(p, &st, last_st);
+          if (cb_s->opts->show_line_numbers)
+            p += sprintf(p, "%d: ", cb_s->line);
+          cb_s->nl = false;
+        }
+        switch(my_ctype(*l)) {
+          case DMPDIFF_WS:
+            st = DFS_DEL_WS;
+            break;
+          case DMPDIFF_NON_WS:
+            st = DFS_DEL_NON_WS;
+            break;
+          case DMPDIFF_NL:
+            st = DFS_DEL_NL;
+            break;
+        }
+        p += mark(p, &st, last_st);
+        if (*l != '\n')
+          *p++ = *l++;
+        else {
+          l++;
+          cb_s->nl = true;
+        }
+        check_buf();
+      } while (l != data + len);
+      return 0;
+
+    case DMP_DIFF_INSERT:
+      do {
+        // if already at beginning of line and either we display something anyhow, or we don't skip equal lines
+        if (cb_s->nl) {
+          st = DFS_EQ;
+          cb_s->line++;
+          p += mark(p, &st, last_st);
+          if (cb_s->opts->show_line_numbers)
+            p += sprintf(p, "%d: ", cb_s->line);
+          cb_s->nl = false;
+        }
+        switch(my_ctype(*l)) {
+          case DMPDIFF_WS:
+            st = DFS_INS_WS;
+            break;
+          case DMPDIFF_NON_WS:
+            st = DFS_INS_NON_WS;
+            break;
+          case DMPDIFF_NL:
+            st = DFS_INS_NL;
+            break;
+        }
+        p += mark(p, &st, last_st);
+        if (*l != '\n')
+          *p++ = *l++;
+        else {
+          l++;
+          cb_s->nl = true;
+        }
+        check_buf();
+      } while (l != data + len);
   }
   return 0;
 }
@@ -198,23 +278,73 @@ int main(int argc, char *argv[])
   int r1, r2;
   dmp_diff *diff;
   dmp_options opts;
+  int option;
+  struct optparse options;
+  struct optparse_long longopts[] = {
+      {"debug",              'd', OPTPARSE_NONE},
+      {"ignore-whitespace",  'w', OPTPARSE_NONE},
+      {"skip-equal-lines",   's', OPTPARSE_NONE},
+      {"show-line-numbers",  'l', OPTPARSE_NONE},
+      {"merge_window", 'm', OPTPARSE_REQUIRED},
+      {0}
+  };
+
   /*
    * Sanity checking
    */
-  printf("%d %d %d\n", isspace(' '), isspace('\t'), isspace('\n'));
-  if (argc != 3) {
+
+  dmp_options_init(&opts);
+  opts.merge_window = 0;
+  opts.ignore_whitespace = false;
+  opts.skip_equal_lines = false;
+  opts.show_line_numbers = false;
+  optparse_init(&options, argv);
+    while ((option = optparse_long(&options, longopts, NULL)) != -1) {
+      switch (option) {
+      case 'd':
+          debug = true;
+          break;
+      case 'w':
+          opts.ignore_whitespace = true;
+          break;
+      case 's':
+          opts.skip_equal_lines = true;
+          break;
+      case 'l':
+          opts.show_line_numbers = true;
+          break;
+      case 'm':
+          opts.merge_window = atoi(options.optarg);
+          break;
+      case '?':
+          fprintf(stderr, "%s: %s\n", argv[0], options.errmsg);
+          exit(EXIT_FAILURE);
+      }
+  }
+
+  /* Print remaining arguments. */
+  //while ((arg = optparse_arg(&options)))
+  //    printf("%s\n", arg);
+  if (options.optind + 2 != argc) {
     printf("Usage %s file1 file2\n", argv[0]);
     exit(64);
   }
-  if ((r1 = get_file_size(&f1, argv[1])) || (r2 = get_file_size(&f2, argv[2]))) {
+  if ((r1 = get_file_size(&f1, optparse_arg(&options))) ||
+      (r2 = get_file_size(&f2, optparse_arg(&options)))) {
     printf("r1=%d r2=%d!\n", r1, r2);
     exit(66);
   }
-  dmp_options_init(&opts);
   opts.timeout = 5.0F;
   dmp_diff_new(&diff, &opts, f1.m, (uint32_t)f1.len, f2.m, (uint32_t)f2.len);
   //dmp_diff_print_raw(stdout, diff);
-  dmp_diff_foreach(diff, cb, 0);
+  cb_s.first = true;
+  cb_s.line = 0;
+  cb_s.opts = &opts;
+  cb_s.st = DFS_EQ;
+  cb_s.last_st = DFS_EQ;
+  cb_s.nl = true;
+  dmp_diff_foreach(diff, cb, &cb_s);
+  flush_buf();
   dmp_diff_free(diff);
   cleanup(&f1);
   cleanup(&f2);
